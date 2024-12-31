@@ -38,11 +38,10 @@ class PlayerManagement(commands.Cog):
 
         embed = discord.Embed(title="Among Us Players", color=discord.Color.blue())
         for idx, player in enumerate(players, 1):
-            # Create mention using discord_id
             user_mention = f"<@{player.discord_id}>"
             embed.add_field(
-                name="\u200b",  # Empty name field
-                value=f"{idx}. {player.ingame_name}, {player.gamer_tag}, {user_mention}",
+                name=f"{idx}.",
+                value=f"{user_mention} - {player.ingame_name}, {player.gamer_tag}",
                 inline=False
             )
         await ctx.send(embed=embed)
@@ -54,56 +53,44 @@ class PlayerManagement(commands.Cog):
             await ctx.send("Please provide a number (e.g., !remove 1)")
             return
 
-        try:
-            players = db.get_all_players()
-            if not players:
-                await ctx.send("No players registered.")
-                return
+        players = db.get_all_players()
+        if not players:
+            await ctx.send("No players registered.")
+            return
 
-            if number < 1 or number > len(players):
-                await ctx.send(f"Please enter a valid number between 1 and {len(players)}.")
-                return
+        if number < 1 or number > len(players):
+            await ctx.send(f"Please enter a valid number between 1 and {len(players)}.")
+            return
 
-            player = players[number - 1]
-            if db.remove_player(player.discord_id):
-                # Use mention format here as well for consistency
-                user_mention = f"<@{player.discord_id}>"
-                await ctx.send(f"Player {user_mention} has been removed.")
-            else:
-                await ctx.send("Error removing player. Please try again.")
-        except ValueError:
-            await ctx.send("Please provide a valid number (e.g., !remove 1)")
+        player = players[number - 1]
+        if db.remove_player(player.discord_id):
+            user_mention = f"<@{player.discord_id}>"
+            await ctx.send(f"Player {user_mention} has been removed.")
+        else:
+            await ctx.send("Error removing player. Please try again.")
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Ignore bot messages
+        # Skip if message is from a bot
         if message.author.bot:
             return
 
-        # Ignore command messages
-        if message.content.startswith(self.bot.command_prefix):
-            return
-
-        # Check if user has an active operation
+        # Skip if not in player registration process
         if not player_state.is_in_progress(message.author.id):
             return
 
-        # Verify the message is in the same channel as the command
-        operation_channel = player_state.get_channel_id(message.author.id)
-        if message.channel.id != operation_channel:
+        # Skip if wrong channel
+        if message.channel.id != player_state.get_channel_id(message.author.id):
+            return
+
+        # Skip if it's a command
+        if message.content.startswith(self.bot.command_prefix):
             return
 
         try:
-            # Get the current step from the state
             current_step = player_state.get_current_step(message.author.id)
-            logger.info(f"Processing step {current_step} for user {message.author.id}")
 
-            # Process the message based on the current step
             if current_step == 'gamer_tag':
-                if message.content.startswith(self.bot.command_prefix):
-                    await message.channel.send("Please enter your gamer tag without using commands.")
-                    return
-
                 player_state.update_operation(message.author.id, 'gamer_tag', message.content)
                 player_state.advance_step(message.author.id)
                 await message.channel.send("Great! Now enter your in-game name:")
@@ -111,9 +98,7 @@ class PlayerManagement(commands.Cog):
             elif current_step == 'ingame_name':
                 player_state.update_operation(message.author.id, 'ingame_name', message.content)
                 player_state.advance_step(message.author.id)
-                # Update to use a mention of the message author
-                author_mention = message.author.mention
-                await message.channel.send(f"Almost done! {author_mention}, please mention the Discord user you want to add (@username):")
+                await message.channel.send(f"Almost done! {message.author.mention}, please mention the Discord user you want to add (@username):")
 
             elif current_step == 'discord_tag':
                 mentions = message.mentions
@@ -124,11 +109,6 @@ class PlayerManagement(commands.Cog):
                 mentioned_user = mentions[0]
                 data = player_state.get_operation_data(message.author.id)
 
-                logger.info(f"Adding player with discord_id: {mentioned_user.id}, "
-                          f"discord_tag: {mentioned_user.name}#{mentioned_user.discriminator}, "
-                          f"gamer_tag: {data.get('gamer_tag')}, "
-                          f"ingame_name: {data.get('ingame_name')}")
-
                 success, response_msg = db.add_player(
                     str(mentioned_user.id),
                     f"{mentioned_user.name}#{mentioned_user.discriminator}",
@@ -136,9 +116,7 @@ class PlayerManagement(commands.Cog):
                     data.get('ingame_name', '')
                 )
 
-                # Update to use mention in response message
-                mentioned_user_mention = mentioned_user.mention
-                await message.channel.send(f"{response_msg} {mentioned_user_mention if success else ''}")
+                await message.channel.send(f"{response_msg} {mentioned_user.mention if success else ''}")
                 if success:
                     player_state.cancel_operation(message.author.id)
 
