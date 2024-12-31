@@ -1,7 +1,10 @@
 import discord
+import logging
 from discord.ext import commands
 from utils import player_state
 import database as db
+
+logger = logging.getLogger(__name__)
 
 class PlayerManagement(commands.Cog):
     def __init__(self, bot):
@@ -14,7 +17,7 @@ class PlayerManagement(commands.Cog):
             await ctx.send("You already have an operation in progress. Use !cancel to stop it.")
             return
 
-        player_state.start_operation(ctx.author.id)
+        player_state.start_operation(ctx.author.id, ctx.channel.id)
         await ctx.send("Let's add a new player! Please enter your gamer tag (e.g., gamertag#1234):")
 
     @commands.command(name='cancel')
@@ -35,16 +38,22 @@ class PlayerManagement(commands.Cog):
 
         embed = discord.Embed(title="Among Us Players", color=discord.Color.blue())
         for idx, player in enumerate(players, 1):
+            # Create mention using discord_id
+            user_mention = f"<@{player.discord_id}>"
             embed.add_field(
-                name=f"{idx}. Discord: {player.discord_tag}",
+                name=f"{idx}. {user_mention}",
                 value=f"Gamer Tag: {player.gamer_tag}\nIn-game Name: {player.ingame_name}",
                 inline=False
             )
         await ctx.send(embed=embed)
 
     @commands.command(name='remove')
-    async def remove_player(self, ctx, number: int):
+    async def remove_player(self, ctx, number: int = None):
         """Remove a player by their list number"""
+        if number is None:
+            await ctx.send("Please provide a number (e.g., !remove 1)")
+            return
+
         try:
             players = db.get_all_players()
             if not players:
@@ -65,42 +74,71 @@ class PlayerManagement(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        if message.author.bot or not player_state.is_in_progress(message.author.id):
+        # Ignore bot messages
+        if message.author.bot:
             return
 
-        current_step = player_state.get_current_step(message.author.id)
+        # Ignore command messages
+        if message.content.startswith(self.bot.command_prefix):
+            return
 
-        if current_step == 'gamer_tag':
-            player_state.update_operation(message.author.id, 'gamer_tag', message.content)
-            player_state.advance_step(message.author.id)
-            await message.channel.send("Great! Now enter your in-game name:")
+        # Check if user has an active operation
+        if not player_state.is_in_progress(message.author.id):
+            return
 
-        elif current_step == 'ingame_name':
-            player_state.update_operation(message.author.id, 'ingame_name', message.content)
-            player_state.advance_step(message.author.id)
-            await message.channel.send("Almost done! Now mention the Discord user (@username):")
+        # Verify the message is in the same channel as the command
+        operation_channel = player_state.get_channel_id(message.author.id)
+        if message.channel.id != operation_channel:
+            return
 
-        elif current_step == 'discord_tag':
-            mentions = message.mentions
-            if not mentions:
-                await message.channel.send("Please mention a valid Discord user.")
-                return
+        try:
+            # Get the current step from the state
+            current_step = player_state.get_current_step(message.author.id)
+            logger.info(f"Processing step {current_step} for user {message.author.id}")
 
-            mentioned_user = mentions[0]
-            data = player_state.get_operation_data(message.author.id)
+            # Process the message based on the current step
+            if current_step == 'gamer_tag':
+                if message.content.startswith(self.bot.command_prefix):
+                    await message.channel.send("Please enter your gamer tag without using commands.")
+                    return
 
-            success = db.add_player(
-                str(mentioned_user.id),
-                f"{mentioned_user.name}#{mentioned_user.discriminator}",
-                data['gamer_tag'],
-                data['ingame_name']
-            )
+                player_state.update_operation(message.author.id, 'gamer_tag', message.content)
+                player_state.advance_step(message.author.id)
+                await message.channel.send("Great! Now enter your in-game name:")
 
-            if success:
-                await message.channel.send("Player added successfully!")
-            else:
-                await message.channel.send("Error adding player. Please try again.")
+            elif current_step == 'ingame_name':
+                player_state.update_operation(message.author.id, 'ingame_name', message.content)
+                player_state.advance_step(message.author.id)
+                await message.channel.send("Almost done! Now mention the Discord user (@username):")
 
+            elif current_step == 'discord_tag':
+                mentions = message.mentions
+                if not mentions:
+                    await message.channel.send("Please mention a valid Discord user.")
+                    return
+
+                mentioned_user = mentions[0]
+                data = player_state.get_operation_data(message.author.id)
+
+                logger.info(f"Adding player with discord_id: {mentioned_user.id}, "
+                          f"discord_tag: {mentioned_user.name}#{mentioned_user.discriminator}, "
+                          f"gamer_tag: {data.get('gamer_tag')}, "
+                          f"ingame_name: {data.get('ingame_name')}")
+
+                success, response_msg = db.add_player(
+                    str(mentioned_user.id),
+                    f"{mentioned_user.name}#{mentioned_user.discriminator}",
+                    data.get('gamer_tag', ''),
+                    data.get('ingame_name', '')
+                )
+
+                await message.channel.send(response_msg)
+                if success:
+                    player_state.cancel_operation(message.author.id)
+
+        except Exception as e:
+            logger.error(f"Error in message processing: {e}")
+            await message.channel.send("An error occurred while processing your request. Please try again or use !cancel to start over.")
             player_state.cancel_operation(message.author.id)
 
 async def setup(bot):

@@ -19,6 +19,11 @@ def add_player(discord_id, discord_tag, gamer_tag, ingame_name):
     session = db.get_session()
     try:
         from models import Player
+        # Check if player already exists
+        existing_player = session.query(Player).filter_by(discord_id=discord_id).first()
+        if existing_player:
+            return False, "This Discord user is already registered."
+
         player = Player(
             discord_id=discord_id,
             discord_tag=discord_tag,
@@ -27,11 +32,11 @@ def add_player(discord_id, discord_tag, gamer_tag, ingame_name):
         )
         session.add(player)
         session.commit()
-        return True
+        return True, "Player added successfully!"
     except Exception as e:
         logging.error(f"Error adding player: {e}")
         session.rollback()
-        return False
+        return False, "An error occurred while adding the player. Please try again."
     finally:
         session.close()
 

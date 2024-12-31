@@ -4,10 +4,11 @@ class AddPlayerState:
     def __init__(self):
         self.current_operations = {}
 
-    def start_operation(self, user_id):
+    def start_operation(self, user_id, channel_id):
         self.current_operations[user_id] = {
             'step': 'gamer_tag',
-            'data': {}
+            'data': {},
+            'channel_id': channel_id  # Track which channel initiated the command
         }
 
     def update_operation(self, user_id, data_key, value):
@@ -19,6 +20,11 @@ class AddPlayerState:
     def get_current_step(self, user_id):
         if user_id in self.current_operations:
             return self.current_operations[user_id]['step']
+        return None
+
+    def get_channel_id(self, user_id):
+        if user_id in self.current_operations:
+            return self.current_operations[user_id]['channel_id']
         return None
 
     def advance_step(self, user_id):
