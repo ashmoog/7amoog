@@ -41,8 +41,8 @@ class PlayerManagement(commands.Cog):
             # Create mention using discord_id
             user_mention = f"<@{player.discord_id}>"
             embed.add_field(
-                name=f"{idx}. {user_mention}",
-                value=f"Gamer Tag: {player.gamer_tag}\nIn-game Name: {player.ingame_name}",
+                name="\u200b",  # Empty name field
+                value=f"{idx}. {player.ingame_name}, {player.gamer_tag}, {user_mention}",
                 inline=False
             )
         await ctx.send(embed=embed)
@@ -66,7 +66,9 @@ class PlayerManagement(commands.Cog):
 
             player = players[number - 1]
             if db.remove_player(player.discord_id):
-                await ctx.send(f"Player {player.discord_tag} has been removed.")
+                # Use mention format here as well for consistency
+                user_mention = f"<@{player.discord_id}>"
+                await ctx.send(f"Player {user_mention} has been removed.")
             else:
                 await ctx.send("Error removing player. Please try again.")
         except ValueError:
@@ -109,7 +111,9 @@ class PlayerManagement(commands.Cog):
             elif current_step == 'ingame_name':
                 player_state.update_operation(message.author.id, 'ingame_name', message.content)
                 player_state.advance_step(message.author.id)
-                await message.channel.send("Almost done! Now mention the Discord user (@username):")
+                # Update to use a mention of the message author
+                author_mention = message.author.mention
+                await message.channel.send(f"Almost done! {author_mention}, please mention the Discord user you want to add (@username):")
 
             elif current_step == 'discord_tag':
                 mentions = message.mentions
@@ -132,7 +136,9 @@ class PlayerManagement(commands.Cog):
                     data.get('ingame_name', '')
                 )
 
-                await message.channel.send(response_msg)
+                # Update to use mention in response message
+                mentioned_user_mention = mentioned_user.mention
+                await message.channel.send(f"{response_msg} {mentioned_user_mention if success else ''}")
                 if success:
                     player_state.cancel_operation(message.author.id)
 
