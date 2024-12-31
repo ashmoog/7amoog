@@ -37,10 +37,10 @@ class PlayerManagement(commands.Cog):
             return
 
         embed = discord.Embed(title="Among Us Players", color=discord.Color.blue())
-        for player in players:
+        for index, player in enumerate(players, 1):
             # Create mention using discord_id and format according to specification
             user_mention = f"<@{player.discord_id}>"
-            formatted_line = f"{user_mention} - {player.ingame_name}, {player.gamer_tag}"
+            formatted_line = f"{index}. {user_mention} - {player.ingame_name}, {player.gamer_tag}"
             embed.add_field(
                 name="\u200b",  # Empty name field
                 value=formatted_line,
