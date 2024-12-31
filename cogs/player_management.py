@@ -37,12 +37,13 @@ class PlayerManagement(commands.Cog):
             return
 
         embed = discord.Embed(title="Among Us Players", color=discord.Color.blue())
-        for idx, player in enumerate(players, 1):
-            # Create mention using discord_id
+        for player in players:
+            # Create mention using discord_id and format according to specification
             user_mention = f"<@{player.discord_id}>"
+            formatted_line = f"{user_mention} - {player.ingame_name}, {player.gamer_tag}"
             embed.add_field(
                 name="\u200b",  # Empty name field
-                value=f"{idx}. {player.ingame_name}, {player.gamer_tag}, {user_mention}",
+                value=formatted_line,
                 inline=False
             )
         await ctx.send(embed=embed)
@@ -80,7 +81,7 @@ class PlayerManagement(commands.Cog):
         if message.author.bot:
             return
 
-        # Ignore command messages
+        # Ignore command messages completely to prevent duplicate processing
         if message.content.startswith(self.bot.command_prefix):
             return
 
