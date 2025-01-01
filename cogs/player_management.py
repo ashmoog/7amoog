@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 class PlayerManagement(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self._processed_messages = set()  # Track all processed message IDs
 
     @commands.command(name='add')
     async def add_player(self, ctx):
@@ -82,14 +83,27 @@ class PlayerManagement(commands.Cog):
         except ValueError:
             await ctx.send("Please provide a valid number (e.g., !remove 1)")
 
+    def _cleanup_message_tracking(self, message_id):
+        """Clean up message tracking data"""
+        if message_id in self._processed_messages:
+            self._processed_messages.remove(message_id)
+            logger.debug(f"Cleaned up message tracking for {message_id}")
+
     @commands.Cog.listener()
     async def on_message(self, message):
         # Ignore bot messages
         if message.author.bot:
             return
 
-        # Ignore command messages completely to prevent duplicate processing
-        if message.content.startswith(self.bot.command_prefix):
+        # Skip if message was already processed
+        if message.id in self._processed_messages:
+            logger.debug(f"Skipping already processed message {message.id}")
+            return
+
+        # Get command context and skip if it's a command
+        ctx = await self.bot.get_context(message)
+        if ctx.valid or message.content.startswith(self.bot.command_prefix):
+            logger.debug(f"Skipping command message: {message.id}")
             return
 
         # Check if user has an active operation
@@ -101,6 +115,10 @@ class PlayerManagement(commands.Cog):
         if message.channel.id != operation_channel:
             return
 
+        # Mark message as being processed
+        self._processed_messages.add(message.id)
+        logger.debug(f"Processing message {message.id} for user {message.author.id}")
+
         try:
             # Get the current step from the state
             current_step = player_state.get_current_step(message.author.id)
@@ -110,6 +128,7 @@ class PlayerManagement(commands.Cog):
             if current_step == 'gamer_tag':
                 if message.content.startswith(self.bot.command_prefix):
                     await message.channel.send("Please enter your gamer tag without using commands.")
+                    self._cleanup_message_tracking(message.id)
                     return
 
                 player_state.update_operation(message.author.id, 'gamer_tag', message.content)
@@ -119,7 +138,6 @@ class PlayerManagement(commands.Cog):
             elif current_step == 'ingame_name':
                 player_state.update_operation(message.author.id, 'ingame_name', message.content)
                 player_state.advance_step(message.author.id)
-                # Update to use a mention of the message author
                 author_mention = message.author.mention
                 await message.channel.send(f"Almost done! {author_mention}, please mention the Discord user you want to add (@username):")
 
@@ -127,15 +145,11 @@ class PlayerManagement(commands.Cog):
                 mentions = message.mentions
                 if not mentions:
                     await message.channel.send("Please mention a valid Discord user.")
+                    self._cleanup_message_tracking(message.id)
                     return
 
                 mentioned_user = mentions[0]
                 data = player_state.get_operation_data(message.author.id)
-
-                logger.info(f"Adding player with discord_id: {mentioned_user.id}, "
-                          f"discord_tag: {mentioned_user.name}#{mentioned_user.discriminator}, "
-                          f"gamer_tag: {data.get('gamer_tag')}, "
-                          f"ingame_name: {data.get('ingame_name')}")
 
                 success, response_msg = db.add_player(
                     str(mentioned_user.id),
@@ -144,16 +158,17 @@ class PlayerManagement(commands.Cog):
                     data.get('ingame_name', '')
                 )
 
-                # Update to use mention in response message
                 mentioned_user_mention = mentioned_user.mention
                 await message.channel.send(f"{response_msg} {mentioned_user_mention if success else ''}")
                 if success:
                     player_state.cancel_operation(message.author.id)
+                self._cleanup_message_tracking(message.id)
 
         except Exception as e:
             logger.error(f"Error in message processing: {e}")
             await message.channel.send("An error occurred while processing your request. Please try again or use !cancel to start over.")
             player_state.cancel_operation(message.author.id)
+            self._cleanup_message_tracking(message.id)
 
 async def setup(bot):
     await bot.add_cog(PlayerManagement(bot))
