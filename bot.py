@@ -15,7 +15,8 @@ class AmongUsBot(commands.Bot):
         super().__init__(
             command_prefix=BOT_PREFIX,
             intents=intents,
-            description="Among Us Player Management Bot"
+            description="Among Us Player Management Bot",
+            application_commands_enabled=False
         )
 
     async def setup_hook(self):
