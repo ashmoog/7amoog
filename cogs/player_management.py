@@ -3,17 +3,83 @@ import logging
 from discord.ext import commands
 from utils import player_state
 import database as db
+from typing import Set, Dict
+import time
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 class PlayerManagement(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self._processed_messages = set()  # Track all processed message IDs
+        self._processed_messages: Set[int] = set()  # Track all processed message IDs
+        self._message_timestamps = {}  # Track when messages were processed
+        self._cleanup_interval = 300  # Cleanup messages older than 5 minutes
+        self._command_cooldowns: Dict[int, float] = defaultdict(float)  # Track command cooldowns per user
+        self._cooldown_time = 3.0  # 3 seconds cooldown between commands
+
+    def _is_message_processed(self, message_id: int) -> bool:
+        """Check if a message has been processed and mark it as processed if not"""
+        current_time = time.time()
+
+        # First check if message was already processed
+        if message_id in self._processed_messages:
+            logger.debug(f"Message {message_id} was already processed")
+            return True
+
+        # Add message to tracking
+        self._processed_messages.add(message_id)
+        self._message_timestamps[message_id] = current_time
+
+        # Cleanup old messages
+        self._cleanup_old_messages(current_time)
+        return False
+
+    def _cleanup_old_messages(self, current_time: float) -> None:
+        """Clean up messages older than cleanup_interval seconds"""
+        old_messages = {
+            msg_id for msg_id, timestamp in self._message_timestamps.items()
+            if current_time - timestamp > self._cleanup_interval
+        }
+
+        for msg_id in old_messages:
+            self._processed_messages.discard(msg_id)
+            self._message_timestamps.pop(msg_id, None)
+
+        if old_messages:
+            logger.debug(f"Cleaned up {len(old_messages)} old messages")
+
+    def _check_command_cooldown(self, user_id: int) -> bool:
+        """Check if user is on cooldown for commands"""
+        current_time = time.time()
+        last_command_time = self._command_cooldowns[user_id]
+
+        if current_time - last_command_time < self._cooldown_time:
+            logger.warning(f"User {user_id} attempted command during cooldown")
+            return False
+
+        self._command_cooldowns[user_id] = current_time
+        return True
+
+    async def _process_command(self, ctx) -> bool:
+        """Process command with duplicate prevention and rate limiting"""
+        if self._is_message_processed(ctx.message.id):
+            logger.warning(f"Duplicate command detected: {ctx.message.id}")
+            return False
+
+        if not self._check_command_cooldown(ctx.author.id):
+            await ctx.send(f"Please wait {self._cooldown_time} seconds between commands.")
+            return False
+
+        logger.info(f"Processing command from user {ctx.author.id}: {ctx.message.content}")
+        return True
 
     @commands.command(name='add')
     async def add_player(self, ctx):
         """Start the process of adding a new player"""
+        if not await self._process_command(ctx):
+            return
+
         if player_state.is_in_progress(ctx.author.id):
             await ctx.send("You already have an operation in progress. Use !cancel to stop it.")
             return
@@ -24,6 +90,9 @@ class PlayerManagement(commands.Cog):
     @commands.command(name='cancel')
     async def cancel(self, ctx):
         """Cancel the current operation"""
+        if not await self._process_command(ctx):
+            return
+
         if player_state.cancel_operation(ctx.author.id):
             await ctx.send("Operation cancelled.")
         else:
@@ -32,6 +101,9 @@ class PlayerManagement(commands.Cog):
     @commands.command(name='list')
     async def list_players(self, ctx):
         """List all players"""
+        if not await self._process_command(ctx):
+            return
+
         players = db.get_all_players()
         if not players:
             await ctx.send("No players registered.")
@@ -41,17 +113,15 @@ class PlayerManagement(commands.Cog):
         players = sorted(players, key=lambda x: x.ingame_name.lower())
 
         embed = discord.Embed(title="Among Us Players", color=discord.Color.blue())
-        # Combine all players into a single field with line breaks
         player_list = []
         for index, player in enumerate(players, 1):
             user_mention = f"<@{player.discord_id}>"
             formatted_line = f"{index}. {user_mention} - {player.ingame_name}, {player.gamer_tag}"
             player_list.append(formatted_line)
 
-        # Join all players with single newlines and add as a single field
         embed.add_field(
-            name="\u200b",  # Empty name field
-            value='\n'.join(player_list),  # Single newline between entries
+            name="\u200b",
+            value='\n'.join(player_list),
             inline=False
         )
         await ctx.send(embed=embed)
@@ -59,6 +129,9 @@ class PlayerManagement(commands.Cog):
     @commands.command(name='remove')
     async def remove_player(self, ctx, number: int = None):
         """Remove a player by their list number"""
+        if not await self._process_command(ctx):
+            return
+
         if number is None:
             await ctx.send("Please provide a number (e.g., !remove 1)")
             return
@@ -75,19 +148,12 @@ class PlayerManagement(commands.Cog):
 
             player = players[number - 1]
             if db.remove_player(player.discord_id):
-                # Use mention format here as well for consistency
                 user_mention = f"<@{player.discord_id}>"
                 await ctx.send(f"Player {user_mention} has been removed.")
             else:
                 await ctx.send("Error removing player. Please try again.")
         except ValueError:
             await ctx.send("Please provide a valid number (e.g., !remove 1)")
-
-    def _cleanup_message_tracking(self, message_id):
-        """Clean up message tracking data"""
-        if message_id in self._processed_messages:
-            self._processed_messages.remove(message_id)
-            logger.debug(f"Cleaned up message tracking for {message_id}")
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -96,14 +162,12 @@ class PlayerManagement(commands.Cog):
             return
 
         # Skip if message was already processed
-        if message.id in self._processed_messages:
-            logger.debug(f"Skipping already processed message {message.id}")
+        if self._is_message_processed(message.id):
             return
 
         # Get command context and skip if it's a command
         ctx = await self.bot.get_context(message)
         if ctx.valid or message.content.startswith(self.bot.command_prefix):
-            logger.debug(f"Skipping command message: {message.id}")
             return
 
         # Check if user has an active operation
@@ -115,20 +179,15 @@ class PlayerManagement(commands.Cog):
         if message.channel.id != operation_channel:
             return
 
-        # Mark message as being processed
-        self._processed_messages.add(message.id)
         logger.debug(f"Processing message {message.id} for user {message.author.id}")
 
         try:
-            # Get the current step from the state
             current_step = player_state.get_current_step(message.author.id)
             logger.info(f"Processing step {current_step} for user {message.author.id}")
 
-            # Process the message based on the current step
             if current_step == 'gamer_tag':
                 if message.content.startswith(self.bot.command_prefix):
                     await message.channel.send("Please enter your gamer tag without using commands.")
-                    self._cleanup_message_tracking(message.id)
                     return
 
                 player_state.update_operation(message.author.id, 'gamer_tag', message.content)
@@ -145,7 +204,6 @@ class PlayerManagement(commands.Cog):
                 mentions = message.mentions
                 if not mentions:
                     await message.channel.send("Please mention a valid Discord user.")
-                    self._cleanup_message_tracking(message.id)
                     return
 
                 mentioned_user = mentions[0]
@@ -162,13 +220,11 @@ class PlayerManagement(commands.Cog):
                 await message.channel.send(f"{response_msg} {mentioned_user_mention if success else ''}")
                 if success:
                     player_state.cancel_operation(message.author.id)
-                self._cleanup_message_tracking(message.id)
 
         except Exception as e:
             logger.error(f"Error in message processing: {e}")
             await message.channel.send("An error occurred while processing your request. Please try again or use !cancel to start over.")
             player_state.cancel_operation(message.author.id)
-            self._cleanup_message_tracking(message.id)
 
 async def setup(bot):
     await bot.add_cog(PlayerManagement(bot))
