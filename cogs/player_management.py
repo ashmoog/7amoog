@@ -36,16 +36,23 @@ class PlayerManagement(commands.Cog):
             await ctx.send("No players registered.")
             return
 
+        # Sort players by ingame_name (case-insensitive)
+        players = sorted(players, key=lambda x: x.ingame_name.lower())
+
         embed = discord.Embed(title="Among Us Players", color=discord.Color.blue())
+        # Combine all players into a single field with line breaks
+        player_list = []
         for index, player in enumerate(players, 1):
-            # Create mention using discord_id and format according to specification
             user_mention = f"<@{player.discord_id}>"
             formatted_line = f"{index}. {user_mention} - {player.ingame_name}, {player.gamer_tag}"
-            embed.add_field(
-                name="\u200b",  # Empty name field
-                value=formatted_line,
-                inline=False
-            )
+            player_list.append(formatted_line)
+
+        # Join all players with single newlines and add as a single field
+        embed.add_field(
+            name="\u200b",  # Empty name field
+            value='\n'.join(player_list),  # Single newline between entries
+            inline=False
+        )
         await ctx.send(embed=embed)
 
     @commands.command(name='remove')
