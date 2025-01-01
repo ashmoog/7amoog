@@ -1,15 +1,53 @@
 import discord
 import logging
+import time
 from discord.ext import commands
 from utils import player_state
 import database as db
+from typing import Dict, Set, Tuple
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 class PlayerManagement(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self._processed_messages = set()  # Track all processed message IDs
+        # Track processed messages with timestamps {message_id: timestamp}
+        self._processed_messages: Dict[int, float] = {}
+        # Track messages per user {user_id: Set[message_id]}
+        self._user_messages: Dict[int, Set[int]] = defaultdict(set)
+        # Message processing timeout (5 minutes)
+        self._message_timeout = 300  
+
+    def _is_message_processed(self, message_id: int) -> bool:
+        """Check if a message was processed and handle cleanup"""
+        current_time = time.time()
+
+        # Clean up old messages
+        expired_messages = [
+            mid for mid, timestamp in self._processed_messages.items()
+            if current_time - timestamp > self._message_timeout
+        ]
+
+        for mid in expired_messages:
+            self._cleanup_message_tracking(mid)
+
+        return message_id in self._processed_messages
+
+    def _mark_message_processed(self, message_id: int, user_id: int):
+        """Mark a message as processed with current timestamp"""
+        self._processed_messages[message_id] = time.time()
+        self._user_messages[user_id].add(message_id)
+        logger.debug(f"Marked message {message_id} as processed for user {user_id}")
+
+    def _cleanup_message_tracking(self, message_id: int):
+        """Clean up message tracking data"""
+        if message_id in self._processed_messages:
+            timestamp = self._processed_messages.pop(message_id)
+            # Clean up user messages
+            for user_messages in self._user_messages.values():
+                user_messages.discard(message_id)
+            logger.debug(f"Cleaned up message tracking for {message_id} (timestamp: {timestamp})")
 
     @commands.command(name='add')
     async def add_player(self, ctx):
@@ -19,11 +57,13 @@ class PlayerManagement(commands.Cog):
             return
 
         player_state.start_operation(ctx.author.id, ctx.channel.id)
+        self._mark_message_processed(ctx.message.id, ctx.author.id)
         await ctx.send("Let's add a new player! Please enter your gamer tag (e.g., gamertag#1234):")
 
     @commands.command(name='cancel')
     async def cancel(self, ctx):
         """Cancel the current operation"""
+        self._mark_message_processed(ctx.message.id, ctx.author.id)
         if player_state.cancel_operation(ctx.author.id):
             await ctx.send("Operation cancelled.")
         else:
@@ -32,6 +72,7 @@ class PlayerManagement(commands.Cog):
     @commands.command(name='list')
     async def list_players(self, ctx):
         """List all players"""
+        self._mark_message_processed(ctx.message.id, ctx.author.id)
         players = db.get_all_players()
         if not players:
             await ctx.send("No players registered.")
@@ -41,17 +82,15 @@ class PlayerManagement(commands.Cog):
         players = sorted(players, key=lambda x: x.ingame_name.lower())
 
         embed = discord.Embed(title="Among Us Players", color=discord.Color.blue())
-        # Combine all players into a single field with line breaks
         player_list = []
         for index, player in enumerate(players, 1):
             user_mention = f"<@{player.discord_id}>"
             formatted_line = f"{index}. {user_mention} - {player.ingame_name}, {player.gamer_tag}"
             player_list.append(formatted_line)
 
-        # Join all players with single newlines and add as a single field
         embed.add_field(
-            name="\u200b",  # Empty name field
-            value='\n'.join(player_list),  # Single newline between entries
+            name="\u200b",
+            value='\n'.join(player_list),
             inline=False
         )
         await ctx.send(embed=embed)
@@ -59,6 +98,7 @@ class PlayerManagement(commands.Cog):
     @commands.command(name='remove')
     async def remove_player(self, ctx, number: int = None):
         """Remove a player by their list number"""
+        self._mark_message_processed(ctx.message.id, ctx.author.id)
         if number is None:
             await ctx.send("Please provide a number (e.g., !remove 1)")
             return
@@ -75,19 +115,12 @@ class PlayerManagement(commands.Cog):
 
             player = players[number - 1]
             if db.remove_player(player.discord_id):
-                # Use mention format here as well for consistency
                 user_mention = f"<@{player.discord_id}>"
                 await ctx.send(f"Player {user_mention} has been removed.")
             else:
                 await ctx.send("Error removing player. Please try again.")
         except ValueError:
             await ctx.send("Please provide a valid number (e.g., !remove 1)")
-
-    def _cleanup_message_tracking(self, message_id):
-        """Clean up message tracking data"""
-        if message_id in self._processed_messages:
-            self._processed_messages.remove(message_id)
-            logger.debug(f"Cleaned up message tracking for {message_id}")
 
     @commands.Cog.listener()
     async def on_message(self, message):
@@ -96,7 +129,7 @@ class PlayerManagement(commands.Cog):
             return
 
         # Skip if message was already processed
-        if message.id in self._processed_messages:
+        if self._is_message_processed(message.id):
             logger.debug(f"Skipping already processed message {message.id}")
             return
 
@@ -116,19 +149,16 @@ class PlayerManagement(commands.Cog):
             return
 
         # Mark message as being processed
-        self._processed_messages.add(message.id)
+        self._mark_message_processed(message.id, message.author.id)
         logger.debug(f"Processing message {message.id} for user {message.author.id}")
 
         try:
-            # Get the current step from the state
             current_step = player_state.get_current_step(message.author.id)
             logger.info(f"Processing step {current_step} for user {message.author.id}")
 
-            # Process the message based on the current step
             if current_step == 'gamer_tag':
                 if message.content.startswith(self.bot.command_prefix):
                     await message.channel.send("Please enter your gamer tag without using commands.")
-                    self._cleanup_message_tracking(message.id)
                     return
 
                 player_state.update_operation(message.author.id, 'gamer_tag', message.content)
@@ -145,7 +175,6 @@ class PlayerManagement(commands.Cog):
                 mentions = message.mentions
                 if not mentions:
                     await message.channel.send("Please mention a valid Discord user.")
-                    self._cleanup_message_tracking(message.id)
                     return
 
                 mentioned_user = mentions[0]
@@ -162,13 +191,11 @@ class PlayerManagement(commands.Cog):
                 await message.channel.send(f"{response_msg} {mentioned_user_mention if success else ''}")
                 if success:
                     player_state.cancel_operation(message.author.id)
-                self._cleanup_message_tracking(message.id)
 
         except Exception as e:
             logger.error(f"Error in message processing: {e}")
             await message.channel.send("An error occurred while processing your request. Please try again or use !cancel to start over.")
             player_state.cancel_operation(message.author.id)
-            self._cleanup_message_tracking(message.id)
 
 async def setup(bot):
     await bot.add_cog(PlayerManagement(bot))
