@@ -29,5 +29,10 @@ class AmongUsBot(commands.Bot):
     async def on_ready(self):
         logger.info(f'Logged in as {self.user.name}')
         await self.change_presence(activity=discord.Game(name="Among Us"))
+        
+    async def on_message(self, message):
+        # Let the cogs handle message processing
+        if message.author.bot:
+            return
 
 bot = AmongUsBot()
