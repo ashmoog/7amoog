@@ -3,11 +3,13 @@ import logging
 from discord.ext import commands
 from utils import player_state
 import database as db
-from typing import Set, Dict
+from typing import Set, Dict, Deque
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
+import asyncio
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Ensure debug logging is enabled
 
 class PlayerManagement(commands.Cog):
     def __init__(self, bot):
@@ -17,6 +19,9 @@ class PlayerManagement(commands.Cog):
         self._cleanup_interval = 300  # Cleanup messages older than 5 minutes
         self._command_cooldowns: Dict[int, float] = defaultdict(float)  # Track command cooldowns per user
         self._cooldown_time = 3.0  # 3 seconds cooldown between commands
+        self._message_queue: Deque[discord.Message] = deque(maxlen=100)  # Message queue with max size
+        self._message_lock = asyncio.Lock()  # Lock for synchronizing message processing
+        logger.info("PlayerManagement cog initialized with message tracking and cooldowns")
 
     def _is_message_processed(self, message_id: int) -> bool:
         """Check if a message has been processed and mark it as processed if not"""
@@ -30,10 +35,48 @@ class PlayerManagement(commands.Cog):
         # Add message to tracking
         self._processed_messages.add(message_id)
         self._message_timestamps[message_id] = current_time
+        logger.debug(f"New message {message_id} tracked at {current_time}")
 
         # Cleanup old messages
         self._cleanup_old_messages(current_time)
         return False
+
+    async def _enqueue_message(self, message: discord.Message) -> None:
+        """Add message to processing queue with synchronization"""
+        # Get command context before enqueueing
+        ctx = await self.bot.get_context(message)
+        if ctx.valid or message.content.startswith(self.bot.command_prefix):
+            logger.debug(f"Skipping command message {message.id} during enqueue")
+            return
+
+        async with self._message_lock:
+            if message.id not in self._processed_messages:
+                self._message_queue.append(message)
+                logger.debug(f"Message {message.id} enqueued for processing")
+            else:
+                logger.warning(f"Attempted to enqueue already processed message {message.id}")
+
+    async def _process_message_queue(self) -> None:
+        """Process messages in the queue with synchronization"""
+        async with self._message_lock:
+            while self._message_queue:
+                try:
+                    message = self._message_queue.popleft()
+
+                    # Double-check command context
+                    ctx = await self.bot.get_context(message)
+                    if ctx.valid or message.content.startswith(self.bot.command_prefix):
+                        logger.debug(f"Skipping command message {message.id}")
+                        continue
+
+                    if not self._is_message_processed(message.id):
+                        logger.debug(f"Processing queued message {message.id}")
+                        await self._handle_message(message)
+                    else:
+                        logger.warning(f"Skipping already processed message {message.id}")
+                except Exception as e:
+                    logger.error(f"Error processing message {message.id}: {e}")
+                    continue
 
     def _cleanup_old_messages(self, current_time: float) -> None:
         """Clean up messages older than cleanup_interval seconds"""
@@ -45,24 +88,29 @@ class PlayerManagement(commands.Cog):
         for msg_id in old_messages:
             self._processed_messages.discard(msg_id)
             self._message_timestamps.pop(msg_id, None)
+            logger.debug(f"Cleaned up old message {msg_id}")
 
         if old_messages:
-            logger.debug(f"Cleaned up {len(old_messages)} old messages")
+            logger.info(f"Cleaned up {len(old_messages)} old messages")
 
     def _check_command_cooldown(self, user_id: int) -> bool:
         """Check if user is on cooldown for commands"""
         current_time = time.time()
         last_command_time = self._command_cooldowns[user_id]
+        time_since_last = current_time - last_command_time
 
-        if current_time - last_command_time < self._cooldown_time:
-            logger.warning(f"User {user_id} attempted command during cooldown")
+        if time_since_last < self._cooldown_time:
+            logger.warning(f"User {user_id} attempted command during cooldown. Time since last: {time_since_last:.2f}s")
             return False
 
         self._command_cooldowns[user_id] = current_time
+        logger.debug(f"Updated cooldown for user {user_id} at {current_time}")
         return True
 
     async def _process_command(self, ctx) -> bool:
         """Process command with duplicate prevention and rate limiting"""
+        logger.debug(f"Processing command message {ctx.message.id} from user {ctx.author.id}")
+
         if self._is_message_processed(ctx.message.id):
             logger.warning(f"Duplicate command detected: {ctx.message.id}")
             return False
@@ -155,19 +203,9 @@ class PlayerManagement(commands.Cog):
         except ValueError:
             await ctx.send("Please provide a valid number (e.g., !remove 1)")
 
-    @commands.Cog.listener()
-    async def on_message(self, message):
+    async def _handle_message(self, message):
         # Ignore bot messages
         if message.author.bot:
-            return
-
-        # Skip if message was already processed
-        if self._is_message_processed(message.id):
-            return
-
-        # Get command context and skip if it's a command
-        ctx = await self.bot.get_context(message)
-        if ctx.valid or message.content.startswith(self.bot.command_prefix):
             return
 
         # Check if user has an active operation
@@ -225,6 +263,20 @@ class PlayerManagement(commands.Cog):
             logger.error(f"Error in message processing: {e}")
             await message.channel.send("An error occurred while processing your request. Please try again or use !cancel to start over.")
             player_state.cancel_operation(message.author.id)
+
+
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        # Ignore bot messages
+        if message.author.bot:
+            return
+
+        try:
+            await self._enqueue_message(message)
+            await self._process_message_queue()
+        except Exception as e:
+            logger.error(f"Error in message handling: {e}")
+
 
 async def setup(bot):
     await bot.add_cog(PlayerManagement(bot))
