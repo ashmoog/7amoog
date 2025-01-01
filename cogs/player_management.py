@@ -3,10 +3,9 @@ import logging
 from discord.ext import commands
 from utils import player_state
 import database as db
-from typing import Set, Dict, Deque
+from typing import Dict, Set
 import time
-from collections import defaultdict, deque
-import asyncio
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Ensure debug logging is enabled
@@ -14,112 +13,50 @@ logger.setLevel(logging.DEBUG)  # Ensure debug logging is enabled
 class PlayerManagement(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self._processed_messages: Set[int] = set()  # Track all processed message IDs
-        self._message_timestamps = {}  # Track when messages were processed
-        self._cleanup_interval = 300  # Cleanup messages older than 5 minutes
-        self._command_cooldowns: Dict[int, float] = defaultdict(float)  # Track command cooldowns per user
-        self._cooldown_time = 3.0  # 3 seconds cooldown between commands
-        self._message_queue: Deque[discord.Message] = deque(maxlen=100)  # Message queue with max size
-        self._message_lock = asyncio.Lock()  # Lock for synchronizing message processing
-        logger.info("PlayerManagement cog initialized with message tracking and cooldowns")
+        self._last_response_time: Dict[int, float] = defaultdict(float)  # user_id -> last_response_time
+        self._response_cooldown = 1.0  # 1 second cooldown between responses
+        self._processed_messages: Set[int] = set()  # Track processed message IDs
+        self._user_locks: Set[int] = set()  # Track users with ongoing responses
+        logger.info("PlayerManagement cog initialized with strict response tracking")
 
-    def _is_message_processed(self, message_id: int) -> bool:
-        """Check if a message has been processed and mark it as processed if not"""
-        current_time = time.time()
-
-        # First check if message was already processed
-        if message_id in self._processed_messages:
-            logger.debug(f"Message {message_id} was already processed")
-            return True
-
-        # Add message to tracking
-        self._processed_messages.add(message_id)
-        self._message_timestamps[message_id] = current_time
-        logger.debug(f"New message {message_id} tracked at {current_time}")
-
-        # Cleanup old messages
-        self._cleanup_old_messages(current_time)
-        return False
-
-    async def _enqueue_message(self, message: discord.Message) -> None:
-        """Add message to processing queue with synchronization"""
-        # Get command context before enqueueing
-        ctx = await self.bot.get_context(message)
-        if ctx.valid or message.content.startswith(self.bot.command_prefix):
-            logger.debug(f"Skipping command message {message.id} during enqueue")
-            return
-
-        async with self._message_lock:
-            if message.id not in self._processed_messages:
-                self._message_queue.append(message)
-                logger.debug(f"Message {message.id} enqueued for processing")
-            else:
-                logger.warning(f"Attempted to enqueue already processed message {message.id}")
-
-    async def _process_message_queue(self) -> None:
-        """Process messages in the queue with synchronization"""
-        async with self._message_lock:
-            while self._message_queue:
-                try:
-                    message = self._message_queue.popleft()
-
-                    # Double-check command context
-                    ctx = await self.bot.get_context(message)
-                    if ctx.valid or message.content.startswith(self.bot.command_prefix):
-                        logger.debug(f"Skipping command message {message.id}")
-                        continue
-
-                    if not self._is_message_processed(message.id):
-                        logger.debug(f"Processing queued message {message.id}")
-                        await self._handle_message(message)
-                    else:
-                        logger.warning(f"Skipping already processed message {message.id}")
-                except Exception as e:
-                    logger.error(f"Error processing message {message.id}: {e}")
-                    continue
-
-    def _cleanup_old_messages(self, current_time: float) -> None:
-        """Clean up messages older than cleanup_interval seconds"""
-        old_messages = {
-            msg_id for msg_id, timestamp in self._message_timestamps.items()
-            if current_time - timestamp > self._cleanup_interval
-        }
-
-        for msg_id in old_messages:
-            self._processed_messages.discard(msg_id)
-            self._message_timestamps.pop(msg_id, None)
-            logger.debug(f"Cleaned up old message {msg_id}")
-
-        if old_messages:
-            logger.info(f"Cleaned up {len(old_messages)} old messages")
-
-    def _check_command_cooldown(self, user_id: int) -> bool:
-        """Check if user is on cooldown for commands"""
-        current_time = time.time()
-        last_command_time = self._command_cooldowns[user_id]
-        time_since_last = current_time - last_command_time
-
-        if time_since_last < self._cooldown_time:
-            logger.warning(f"User {user_id} attempted command during cooldown. Time since last: {time_since_last:.2f}s")
+    def _acquire_lock(self, user_id: int) -> bool:
+        """Try to acquire a lock for the user"""
+        if user_id in self._user_locks:
             return False
-
-        self._command_cooldowns[user_id] = current_time
-        logger.debug(f"Updated cooldown for user {user_id} at {current_time}")
+        self._user_locks.add(user_id)
         return True
 
+    def _release_lock(self, user_id: int) -> None:
+        """Release the lock for the user"""
+        self._user_locks.discard(user_id)
+
+    async def _send_single_response(self, ctx_or_message, content: str) -> None:
+        """Send exactly one response and manage user lock"""
+        channel = ctx_or_message.channel
+        user_id = ctx_or_message.author.id
+
+        try:
+            if not self._acquire_lock(user_id):
+                logger.debug(f"Skipping response - user {user_id} has ongoing response")
+                return
+
+            await channel.send(content)
+            self._last_response_time[user_id] = time.time()
+        finally:
+            self._release_lock(user_id)
+
+    def _is_processed(self, message_id: int) -> bool:
+        """Check if message was already processed"""
+        if message_id in self._processed_messages:
+            return True
+        self._processed_messages.add(message_id)
+        return False
+
     async def _process_command(self, ctx) -> bool:
-        """Process command with duplicate prevention and rate limiting"""
-        logger.debug(f"Processing command message {ctx.message.id} from user {ctx.author.id}")
-
-        if self._is_message_processed(ctx.message.id):
-            logger.warning(f"Duplicate command detected: {ctx.message.id}")
+        """Process command with strict duplicate prevention"""
+        if self._is_processed(ctx.message.id):
+            logger.debug(f"Skipping duplicate command {ctx.message.id}")
             return False
-
-        if not self._check_command_cooldown(ctx.author.id):
-            await ctx.send(f"Please wait {self._cooldown_time} seconds between commands.")
-            return False
-
-        logger.info(f"Processing command from user {ctx.author.id}: {ctx.message.content}")
         return True
 
     @commands.command(name='add')
@@ -129,11 +66,11 @@ class PlayerManagement(commands.Cog):
             return
 
         if player_state.is_in_progress(ctx.author.id):
-            await ctx.send("You already have an operation in progress. Use !cancel to stop it.")
+            await self._send_single_response(ctx, "You already have an operation in progress. Use !cancel to stop it.")
             return
 
         player_state.start_operation(ctx.author.id, ctx.channel.id)
-        await ctx.send("Let's add a new player! Please enter your gamer tag (e.g., gamertag#1234):")
+        await self._send_single_response(ctx, "Let's add a new player! Please enter your gamer tag (e.g., gamertag#1234):")
 
     @commands.command(name='cancel')
     async def cancel(self, ctx):
@@ -142,9 +79,9 @@ class PlayerManagement(commands.Cog):
             return
 
         if player_state.cancel_operation(ctx.author.id):
-            await ctx.send("Operation cancelled.")
+            await self._send_single_response(ctx, "Operation cancelled.")
         else:
-            await ctx.send("No operation to cancel.")
+            await self._send_single_response(ctx, "No operation to cancel.")
 
     @commands.command(name='list')
     async def list_players(self, ctx):
@@ -154,12 +91,10 @@ class PlayerManagement(commands.Cog):
 
         players = db.get_all_players()
         if not players:
-            await ctx.send("No players registered.")
+            await self._send_single_response(ctx, "No players registered.")
             return
 
-        # Sort players by ingame_name (case-insensitive)
         players = sorted(players, key=lambda x: x.ingame_name.lower())
-
         embed = discord.Embed(title="Among Us Players", color=discord.Color.blue())
         player_list = []
         for index, player in enumerate(players, 1):
@@ -172,7 +107,12 @@ class PlayerManagement(commands.Cog):
             value='\n'.join(player_list),
             inline=False
         )
-        await ctx.send(embed=embed)
+        if not self._acquire_lock(ctx.author.id):
+            return
+        try:
+            await ctx.send(embed=embed)
+        finally:
+            self._release_lock(ctx.author.id)
 
     @commands.command(name='remove')
     async def remove_player(self, ctx, number: int = None):
@@ -181,67 +121,64 @@ class PlayerManagement(commands.Cog):
             return
 
         if number is None:
-            await ctx.send("Please provide a number (e.g., !remove 1)")
+            await self._send_single_response(ctx, "Please provide a number (e.g., !remove 1)")
             return
 
         try:
             players = db.get_all_players()
             if not players:
-                await ctx.send("No players registered.")
+                await self._send_single_response(ctx, "No players registered.")
                 return
 
             if number < 1 or number > len(players):
-                await ctx.send(f"Please enter a valid number between 1 and {len(players)}.")
+                await self._send_single_response(ctx, f"Please enter a valid number between 1 and {len(players)}.")
                 return
 
             player = players[number - 1]
             if db.remove_player(player.discord_id):
                 user_mention = f"<@{player.discord_id}>"
-                await ctx.send(f"Player {user_mention} has been removed.")
+                await self._send_single_response(ctx, f"Player {user_mention} has been removed.")
             else:
-                await ctx.send("Error removing player. Please try again.")
+                await self._send_single_response(ctx, "Error removing player. Please try again.")
         except ValueError:
-            await ctx.send("Please provide a valid number (e.g., !remove 1)")
+            await self._send_single_response(ctx, "Please provide a valid number (e.g., !remove 1)")
 
     async def _handle_message(self, message):
-        # Ignore bot messages
+        """Handle non-command messages for player registration process"""
         if message.author.bot:
             return
 
-        # Check if user has an active operation
         if not player_state.is_in_progress(message.author.id):
             return
 
-        # Verify the message is in the same channel as the command
-        operation_channel = player_state.get_channel_id(message.author.id)
-        if message.channel.id != operation_channel:
+        if message.channel.id != player_state.get_channel_id(message.author.id):
             return
 
-        logger.debug(f"Processing message {message.id} for user {message.author.id}")
+        if self._is_processed(message.id):
+            return
 
         try:
             current_step = player_state.get_current_step(message.author.id)
-            logger.info(f"Processing step {current_step} for user {message.author.id}")
+            logger.debug(f"Processing step {current_step} for user {message.author.id}")
+
+            if message.content.startswith(self.bot.command_prefix):
+                await self._send_single_response(message, "Please enter your information without using commands.")
+                return
 
             if current_step == 'gamer_tag':
-                if message.content.startswith(self.bot.command_prefix):
-                    await message.channel.send("Please enter your gamer tag without using commands.")
-                    return
-
                 player_state.update_operation(message.author.id, 'gamer_tag', message.content)
                 player_state.advance_step(message.author.id)
-                await message.channel.send("Great! Now enter your in-game name:")
+                await self._send_single_response(message, "Great! Now enter your in-game name:")
 
             elif current_step == 'ingame_name':
                 player_state.update_operation(message.author.id, 'ingame_name', message.content)
                 player_state.advance_step(message.author.id)
-                author_mention = message.author.mention
-                await message.channel.send(f"Almost done! {author_mention}, please mention the Discord user you want to add (@username):")
+                await self._send_single_response(message, f"Almost done! {message.author.mention}, please mention the Discord user you want to add (@username):")
 
             elif current_step == 'discord_tag':
                 mentions = message.mentions
                 if not mentions:
-                    await message.channel.send("Please mention a valid Discord user.")
+                    await self._send_single_response(message, "Please mention a valid Discord user.")
                     return
 
                 mentioned_user = mentions[0]
@@ -254,29 +191,25 @@ class PlayerManagement(commands.Cog):
                     data.get('ingame_name', '')
                 )
 
-                mentioned_user_mention = mentioned_user.mention
-                await message.channel.send(f"{response_msg} {mentioned_user_mention if success else ''}")
+                await self._send_single_response(message, f"{response_msg} {mentioned_user.mention if success else ''}")
                 if success:
                     player_state.cancel_operation(message.author.id)
 
         except Exception as e:
             logger.error(f"Error in message processing: {e}")
-            await message.channel.send("An error occurred while processing your request. Please try again or use !cancel to start over.")
+            await self._send_single_response(message, "An error occurred while processing your request. Please try again or use !cancel to start over.")
             player_state.cancel_operation(message.author.id)
-
 
     @commands.Cog.listener()
     async def on_message(self, message):
-        # Ignore bot messages
+        """Global message handler"""
         if message.author.bot:
             return
 
         try:
-            await self._enqueue_message(message)
-            await self._process_message_queue()
+            await self._handle_message(message)
         except Exception as e:
             logger.error(f"Error in message handling: {e}")
-
 
 async def setup(bot):
     await bot.add_cog(PlayerManagement(bot))
