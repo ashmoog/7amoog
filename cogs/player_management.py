@@ -1,7 +1,8 @@
+from discord.ext import commands
 import discord
 import logging
 import time
-from discord.ext import commands
+import asyncio
 from utils import player_state
 import database as db
 from typing import Dict, Set, Tuple
@@ -14,56 +15,81 @@ class PlayerManagement(commands.Cog):
         self.bot = bot
         # Track processed messages with timestamps {message_id: timestamp}
         self._processed_messages: Dict[int, float] = {}
-        # Track messages per user {user_id: Set[message_id]}
+        # Track messages per user {user_id: Set[int]}
         self._user_messages: Dict[int, Set[int]] = defaultdict(set)
-        # Message processing timeout (5 minutes)
-        self._message_timeout = 300  
+        # Message processing timeout (2 minutes)
+        self._message_timeout = 120  # Reduced from 300 to 120 seconds
+        # Lock for thread-safe message tracking
+        self._message_lock = asyncio.Lock()
+        # Schedule regular cleanup
+        self._schedule_cleanup()
 
-    def _is_message_processed(self, message_id: int) -> bool:
-        """Check if a message was processed and handle cleanup"""
-        current_time = time.time()
+    def _schedule_cleanup(self):
+        """Schedule regular cleanup of old messages"""
+        async def cleanup_task():
+            while True:
+                try:
+                    await asyncio.sleep(60)  # Run cleanup every minute
+                    await self._cleanup_old_messages()
+                except Exception as e:
+                    logger.error(f"Error in cleanup task: {e}")
 
-        # Clean up old messages
-        expired_messages = [
-            mid for mid, timestamp in self._processed_messages.items()
-            if current_time - timestamp > self._message_timeout
-        ]
+        asyncio.create_task(cleanup_task())
 
-        for mid in expired_messages:
-            self._cleanup_message_tracking(mid)
+    async def _cleanup_old_messages(self):
+        """Clean up old messages periodically"""
+        async with self._message_lock:
+            current_time = time.time()
+            expired_messages = [
+                mid for mid, timestamp in self._processed_messages.items()
+                if current_time - timestamp > self._message_timeout
+            ]
+            for mid in expired_messages:
+                self._cleanup_message_tracking(mid)
+            if expired_messages:
+                logger.debug(f"Cleaned up {len(expired_messages)} expired messages")
 
-        return message_id in self._processed_messages
+    async def _is_message_processed(self, message_id: int) -> bool:
+        """Check if a message was processed with thread safety"""
+        async with self._message_lock:
+            return message_id in self._processed_messages
 
-    def _mark_message_processed(self, message_id: int, user_id: int):
-        """Mark a message as processed with current timestamp"""
-        self._processed_messages[message_id] = time.time()
-        self._user_messages[user_id].add(message_id)
-        logger.debug(f"Marked message {message_id} as processed for user {user_id}")
+    async def _mark_message_processed(self, message_id: int, user_id: int):
+        """Mark a message as processed with thread safety"""
+        async with self._message_lock:
+            if message_id not in self._processed_messages:
+                self._processed_messages[message_id] = time.time()
+                self._user_messages[user_id].add(message_id)
+                logger.debug(f"Marked message {message_id} as processed for user {user_id}")
 
     def _cleanup_message_tracking(self, message_id: int):
         """Clean up message tracking data"""
         if message_id in self._processed_messages:
-            timestamp = self._processed_messages.pop(message_id)
+            self._processed_messages.pop(message_id)
             # Clean up user messages
             for user_messages in self._user_messages.values():
                 user_messages.discard(message_id)
-            logger.debug(f"Cleaned up message tracking for {message_id} (timestamp: {timestamp})")
+            logger.debug(f"Cleaned up message tracking for {message_id}")
 
     @commands.command(name='add')
     async def add_player(self, ctx):
         """Start the process of adding a new player"""
+        if await self._is_message_processed(ctx.message.id):
+            return
+
+        await self._mark_message_processed(ctx.message.id, ctx.author.id)
+
         if player_state.is_in_progress(ctx.author.id):
             await ctx.send("You already have an operation in progress. Use !cancel to stop it.")
             return
 
         player_state.start_operation(ctx.author.id, ctx.channel.id)
-        self._mark_message_processed(ctx.message.id, ctx.author.id)
         await ctx.send("Let's add a new player! Please enter your gamer tag (e.g., gamertag#1234):")
 
     @commands.command(name='cancel')
     async def cancel(self, ctx):
         """Cancel the current operation"""
-        self._mark_message_processed(ctx.message.id, ctx.author.id)
+        await self._mark_message_processed(ctx.message.id, ctx.author.id)
         if player_state.cancel_operation(ctx.author.id):
             await ctx.send("Operation cancelled.")
         else:
@@ -72,7 +98,7 @@ class PlayerManagement(commands.Cog):
     @commands.command(name='list')
     async def list_players(self, ctx):
         """List all players"""
-        self._mark_message_processed(ctx.message.id, ctx.author.id)
+        await self._mark_message_processed(ctx.message.id, ctx.author.id)
         players = db.get_all_players()
         if not players:
             await ctx.send("No players registered.")
@@ -102,7 +128,7 @@ class PlayerManagement(commands.Cog):
     @commands.command(name='remove')
     async def remove_player(self, ctx, number: str = None):
         """Remove a player by their list number"""
-        self._mark_message_processed(ctx.message.id, ctx.author.id)
+        await self._mark_message_processed(ctx.message.id, ctx.author.id)
 
         if number is None:
             await ctx.send("Please provide a number (e.g., !remove 1)")
@@ -138,7 +164,7 @@ class PlayerManagement(commands.Cog):
             return
 
         # Skip if message was already processed
-        if self._is_message_processed(message.id):
+        if await self._is_message_processed(message.id):
             logger.debug(f"Skipping already processed message {message.id}")
             return
 
@@ -158,7 +184,7 @@ class PlayerManagement(commands.Cog):
             return
 
         # Mark message as being processed
-        self._mark_message_processed(message.id, message.author.id)
+        await self._mark_message_processed(message.id, message.author.id)
         logger.debug(f"Processing message {message.id} for user {message.author.id}")
 
         try:
