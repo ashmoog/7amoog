@@ -79,11 +79,15 @@ class PlayerManagement(commands.Cog):
             return
 
         # Sort players by ingame_name (case-insensitive)
-        players = sorted(players, key=lambda x: x.ingame_name.lower())
+        sorted_players = sorted(players, key=lambda x: x.ingame_name.lower())
+
+        # Create a mapping of display index to player for removal command
+        self.player_list_cache = {str(i+1): player for i, player in enumerate(sorted_players)}
+        logger.debug(f"Updated player list cache: {[(k, v.ingame_name) for k, v in self.player_list_cache.items()]}")
 
         embed = discord.Embed(title="Among Us Players", color=discord.Color.blue())
         player_list = []
-        for index, player in enumerate(players, 1):
+        for index, player in enumerate(sorted_players, 1):
             user_mention = f"<@{player.discord_id}>"
             formatted_line = f"{index}. {user_mention} - {player.ingame_name}, {player.gamer_tag}"
             player_list.append(formatted_line)
@@ -96,31 +100,36 @@ class PlayerManagement(commands.Cog):
         await ctx.send(embed=embed)
 
     @commands.command(name='remove')
-    async def remove_player(self, ctx, number: int = None):
+    async def remove_player(self, ctx, number: str = None):
         """Remove a player by their list number"""
         self._mark_message_processed(ctx.message.id, ctx.author.id)
+
         if number is None:
             await ctx.send("Please provide a number (e.g., !remove 1)")
             return
 
         try:
-            players = db.get_all_players()
-            if not players:
-                await ctx.send("No players registered.")
+            if not hasattr(self, 'player_list_cache') or not self.player_list_cache:
+                await ctx.send("Please use !list first to see the current players.")
                 return
 
-            if number < 1 or number > len(players):
-                await ctx.send(f"Please enter a valid number between 1 and {len(players)}.")
+            logger.debug(f"Attempting to remove player number {number} from cache: {[(k, v.ingame_name) for k, v in self.player_list_cache.items()]}")
+
+            if number not in self.player_list_cache:
+                await ctx.send(f"Please enter a valid number from the list (use !list to see available numbers)")
                 return
 
-            player = players[number - 1]
+            player = self.player_list_cache[number]
             if db.remove_player(player.discord_id):
                 user_mention = f"<@{player.discord_id}>"
                 await ctx.send(f"Player {user_mention} has been removed.")
+                # Clear the cache after successful removal
+                self.player_list_cache.clear()
             else:
                 await ctx.send("Error removing player. Please try again.")
-        except ValueError:
-            await ctx.send("Please provide a valid number (e.g., !remove 1)")
+        except Exception as e:
+            logger.error(f"Error in remove_player: {e}")
+            await ctx.send("An error occurred. Please try again with a valid number (e.g., !remove 1)")
 
     @commands.Cog.listener()
     async def on_message(self, message):
