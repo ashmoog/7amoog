@@ -13,7 +13,6 @@ class Player(Base):
     discord_tag = Column(String, nullable=False)
     gamer_tag = Column(String, nullable=False)
     ingame_name = Column(String, nullable=False)
-    __table_args__ = {'sqlite_on_conflict': 'REPLACE'}
 
     def __repr__(self):
         return f"<Player(discord_tag='{self.discord_tag}', gamer_tag='{self.gamer_tag}', ingame_name='{self.ingame_name}')>"
