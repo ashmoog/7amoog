@@ -117,39 +117,37 @@ class PlayerManagement(commands.Cog):
             value='\n'.join(player_list),
             inline=False
         )
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
     @discord.app_commands.command(name="remove", description="Remove a player by their list number")
     async def remove_player(self, interaction: discord.Interaction, number: str):
         """Remove a player by their list number"""
-        await self._mark_message_processed(ctx.message.id, ctx.author.id)
-
         if number is None:
-            await ctx.send("Please provide a number (e.g., !remove 1)")
+            await interaction.response.send_message("Please provide a number (e.g., /remove 1)")
             return
 
         try:
             if not hasattr(self, 'player_list_cache') or not self.player_list_cache:
-                await ctx.send("Please use !list first to see the current players.")
+                await interaction.response.send_message("Please use /list first to see the current players.")
                 return
 
             logger.debug(f"Attempting to remove player number {number} from cache: {[(k, v.ingame_name) for k, v in self.player_list_cache.items()]}")
 
             if number not in self.player_list_cache:
-                await ctx.send(f"Please enter a valid number from the list (use !list to see available numbers)")
+                await interaction.response.send_message(f"Please enter a valid number from the list (use /list to see available numbers)")
                 return
 
             player = self.player_list_cache[number]
             if db.remove_player(player.discord_id):
                 user_mention = f"<@{player.discord_id}>"
-                await ctx.send(f"Player {user_mention} has been removed.")
+                await interaction.response.send_message(f"Player {user_mention} has been removed.")
                 # Clear the cache after successful removal
                 self.player_list_cache.clear()
             else:
-                await ctx.send("Error removing player. Please try again.")
+                await interaction.response.send_message("Error removing player. Please try again.")
         except Exception as e:
             logger.error(f"Error in remove_player: {e}")
-            await ctx.send("An error occurred. Please try again with a valid number (e.g., !remove 1)")
+            await interaction.response.send_message("An error occurred. Please try again with a valid number (e.g., /remove 1)")
 
     @commands.Cog.listener()
     async def on_message(self, message):
