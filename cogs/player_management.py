@@ -115,11 +115,7 @@ class PlayerManagement(commands.Cog):
             formatted_line = f"{index}. {user_mention} - {player.ingame_name}, {player.gamer_tag}"
             player_list.append(formatted_line)
 
-        embed.add_field(
-            name="\u200b",
-            value='\n'.join(player_list),
-            inline=False
-        )
+        embed.description = '\n'.join(player_list)
         await interaction.response.send_message(embed=embed)
 
     @discord.app_commands.command(name="remove", description="Remove a player by their list number")
