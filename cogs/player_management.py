@@ -75,34 +75,27 @@ class PlayerManagement(commands.Cog):
     @discord.app_commands.command(name="add", description="Start the process of adding a new player")
     async def add_player(self, interaction: discord.Interaction):
         """Start the process of adding a new player"""
-        if await self._is_message_processed(ctx.message.id):
+        if player_state.is_in_progress(interaction.user.id):
+            await interaction.response.send_message("You already have an operation in progress. Use /cancel to stop it.")
             return
 
-        await self._mark_message_processed(ctx.message.id, ctx.author.id)
-
-        if player_state.is_in_progress(ctx.author.id):
-            await ctx.send("You already have an operation in progress. Use !cancel to stop it.")
-            return
-
-        player_state.start_operation(ctx.author.id, ctx.channel.id)
-        await ctx.send("Let's add a new player! Please enter your gamer tag (e.g., gamertag#1234):")
+        player_state.start_operation(interaction.user.id, interaction.channel_id)
+        await interaction.response.send_message("Let's add a new player! Please enter your gamer tag (e.g., gamertag#1234):")
 
     @discord.app_commands.command(name="cancel", description="Cancel the current operation")
     async def cancel(self, interaction: discord.Interaction):
         """Cancel the current operation"""
-        await self._mark_message_processed(ctx.message.id, ctx.author.id)
-        if player_state.cancel_operation(ctx.author.id):
-            await ctx.send("Operation cancelled.")
+        if player_state.cancel_operation(interaction.user.id):
+            await interaction.response.send_message("Operation cancelled.")
         else:
-            await ctx.send("No operation to cancel.")
+            await interaction.response.send_message("No operation to cancel.")
 
     @discord.app_commands.command(name="list", description="List all registered players")
     async def list_players(self, interaction: discord.Interaction):
         """List all players"""
-        await self._mark_message_processed(ctx.message.id, ctx.author.id)
         players = db.get_all_players()
         if not players:
-            await ctx.send("No players registered.")
+            await interaction.response.send_message("No players registered.")
             return
 
         # Sort players by ingame_name (case-insensitive)
