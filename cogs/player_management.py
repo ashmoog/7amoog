@@ -209,6 +209,12 @@ class PlayerManagement(commands.Cog):
                     await message.channel.send("Please enter your gamer tag without using commands.")
                     return
 
+                # Validate gamer tag format (gamertag#0000)
+                import re
+                if not re.match(r'^[\w\s]+#\d{4}$', message.content):
+                    await message.channel.send("Invalid gamer tag format. Please use the format 'gamertag#0000'.")
+                    return
+
                 player_state.update_operation(message.author.id, 'gamer_tag', message.content)
                 player_state.advance_step(message.author.id)
                 await message.channel.send("Great! Now enter your in-game name:")
