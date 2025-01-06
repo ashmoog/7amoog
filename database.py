@@ -6,9 +6,10 @@ from config import DATABASE_URL
 
 class Database:
     def __init__(self):
+        if not DATABASE_URL:
+            raise ValueError("DATABASE_URL environment variable is not set")
         self.engine = create_engine(DATABASE_URL)
-        Base.metadata.drop_all(self.engine)  # Drop existing tables
-        Base.metadata.create_all(self.engine)  # Create fresh tables
+        Base.metadata.create_all(self.engine)  # Create tables if they don't exist
         self.Session = sessionmaker(bind=self.engine)
 
     def get_session(self):
