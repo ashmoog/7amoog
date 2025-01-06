@@ -16,7 +16,7 @@ class AmongUsBot(commands.Bot):
             command_prefix=BOT_PREFIX,
             intents=intents,
             description="Among Us Player Management Bot",
-            application_commands_enabled=False,
+            application_commands_enabled=True,
             # Add auto-reconnect settings
             heartbeat_timeout=150.0,
             guild_ready_timeout=5.0
@@ -28,8 +28,12 @@ class AmongUsBot(commands.Bot):
             logger.info("Loaded PlayerManagement cog")
             commands_list = [command.name for command in self.commands]
             logger.debug(f"Registered commands: {commands_list}")
+            
+            # Sync commands with Discord
+            await self.tree.sync()
+            logger.info("Synced command tree with Discord")
         except Exception as e:
-            logger.error(f"Error loading PlayerManagement cog: {e}")
+            logger.error(f"Error in setup: {e}")
             raise
 
     async def on_ready(self):
