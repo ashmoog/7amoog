@@ -22,6 +22,8 @@ class PlayerManagement(commands.Cog):
         self._message_timeout = 120  # Reduced from 300 to 120 seconds
         # Lock for thread-safe message tracking
         self._message_lock = asyncio.Lock()
+        # Track last removed player for undo
+        self.last_removed_player = None
         # Schedule regular cleanup
         self._schedule_cleanup()
 
@@ -139,8 +141,9 @@ class PlayerManagement(commands.Cog):
 
             player = self.player_list_cache[number]
             if db.remove_player(player.discord_id):
+                self.last_removed_player = player
                 user_mention = f"<@{player.discord_id}>"
-                await interaction.response.send_message(f"Player {user_mention} has been removed.")
+                await interaction.response.send_message(f"Player {user_mention} has been removed. Use /undo to restore.")
                 # Clear the cache after successful removal
                 self.player_list_cache.clear()
             else:
@@ -189,6 +192,28 @@ class PlayerManagement(commands.Cog):
                     return
 
                 player_state.update_operation(message.author.id, 'gamer_tag', message.content)
+
+    @discord.app_commands.command(name="undo", description="Restore the last removed player")
+    async def undo_remove(self, interaction: discord.Interaction):
+        """Restore the last removed player"""
+        if not self.last_removed_player:
+            await interaction.response.send_message("No player to restore.")
+            return
+
+        success, response_msg = db.add_player(
+            self.last_removed_player.discord_id,
+            self.last_removed_player.discord_tag,
+            self.last_removed_player.gamer_tag,
+            self.last_removed_player.ingame_name
+        )
+
+        if success:
+            user_mention = f"<@{self.last_removed_player.discord_id}>"
+            await interaction.response.send_message(f"Restored player {user_mention}!")
+            self.last_removed_player = None
+        else:
+            await interaction.response.send_message("Failed to restore player. Please try again.")
+
                 player_state.advance_step(message.author.id)
                 await message.channel.send("Great! Now enter your in-game name:")
 
