@@ -1,5 +1,6 @@
 from discord.ext import commands
 import discord
+from discord import app_commands
 import logging
 import time
 import asyncio
@@ -71,8 +72,8 @@ class PlayerManagement(commands.Cog):
                 user_messages.discard(message_id)
             logger.debug(f"Cleaned up message tracking for {message_id}")
 
-    @commands.command(name='add')
-    async def add_player(self, ctx):
+    @discord.app_commands.command(name="add", description="Start the process of adding a new player")
+    async def add_player(self, interaction: discord.Interaction):
         """Start the process of adding a new player"""
         if await self._is_message_processed(ctx.message.id):
             return
@@ -86,8 +87,8 @@ class PlayerManagement(commands.Cog):
         player_state.start_operation(ctx.author.id, ctx.channel.id)
         await ctx.send("Let's add a new player! Please enter your gamer tag (e.g., gamertag#1234):")
 
-    @commands.command(name='cancel')
-    async def cancel(self, ctx):
+    @discord.app_commands.command(name="cancel", description="Cancel the current operation")
+    async def cancel(self, interaction: discord.Interaction):
         """Cancel the current operation"""
         await self._mark_message_processed(ctx.message.id, ctx.author.id)
         if player_state.cancel_operation(ctx.author.id):
@@ -95,8 +96,8 @@ class PlayerManagement(commands.Cog):
         else:
             await ctx.send("No operation to cancel.")
 
-    @commands.command(name='list')
-    async def list_players(self, ctx):
+    @discord.app_commands.command(name="list", description="List all registered players")
+    async def list_players(self, interaction: discord.Interaction):
         """List all players"""
         await self._mark_message_processed(ctx.message.id, ctx.author.id)
         players = db.get_all_players()
@@ -125,8 +126,8 @@ class PlayerManagement(commands.Cog):
         )
         await ctx.send(embed=embed)
 
-    @commands.command(name='remove')
-    async def remove_player(self, ctx, number: str = None):
+    @discord.app_commands.command(name="remove", description="Remove a player by their list number")
+    async def remove_player(self, interaction: discord.Interaction, number: str):
         """Remove a player by their list number"""
         await self._mark_message_processed(ctx.message.id, ctx.author.id)
 
