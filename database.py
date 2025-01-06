@@ -15,17 +15,18 @@ class Database:
 
 db = Database()
 
-def add_player(discord_id, discord_tag, gamer_tag, ingame_name):
+def add_player(discord_id, discord_tag, gamer_tag, ingame_name, guild_id):
     session = db.get_session()
     try:
         from models import Player
-        # Check if player already exists
-        existing_player = session.query(Player).filter_by(discord_id=discord_id).first()
+        # Check if player already exists in this guild
+        existing_player = session.query(Player).filter_by(discord_id=discord_id, guild_id=guild_id).first()
         if existing_player:
-            return False, "This Discord user is already registered."
+            return False, "This Discord user is already registered in this server."
 
         player = Player(
             discord_id=discord_id,
+            guild_id=guild_id,
             discord_tag=discord_tag,
             gamer_tag=gamer_tag,
             ingame_name=ingame_name
@@ -40,11 +41,11 @@ def add_player(discord_id, discord_tag, gamer_tag, ingame_name):
     finally:
         session.close()
 
-def remove_player(discord_id):
+def remove_player(discord_id, guild_id):
     session = db.get_session()
     try:
         from models import Player
-        player = session.query(Player).filter_by(discord_id=discord_id).first()
+        player = session.query(Player).filter_by(discord_id=discord_id, guild_id=guild_id).first()
         if player:
             session.delete(player)
             session.commit()
@@ -57,11 +58,11 @@ def remove_player(discord_id):
     finally:
         session.close()
 
-def get_all_players():
+def get_all_players(guild_id):
     session = db.get_session()
     try:
         from models import Player
-        return session.query(Player).all()
+        return session.query(Player).filter_by(guild_id=guild_id).all()
     finally:
         session.close()
 

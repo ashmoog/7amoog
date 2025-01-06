@@ -96,7 +96,7 @@ class PlayerManagement(commands.Cog):
     @discord.app_commands.command(name="list", description="List all registered players")
     async def list_players(self, interaction: discord.Interaction):
         """List all players"""
-        players = db.get_all_players()
+        players = db.get_all_players(str(interaction.guild_id))
         if not players:
             await interaction.response.send_message("No players registered.")
             return
@@ -141,7 +141,7 @@ class PlayerManagement(commands.Cog):
                 return
 
             player = self.player_list_cache[number]
-            if db.remove_player(player.discord_id):
+            if db.remove_player(player.discord_id, str(interaction.guild_id)):
                 self.last_removed_player = player
                 user_mention = f"<@{player.discord_id}>"
                 await interaction.response.send_message(f"Player {user_mention} has been removed. Use /undo to restore.")
@@ -236,7 +236,8 @@ class PlayerManagement(commands.Cog):
                     str(mentioned_user.id),
                     f"{mentioned_user.name}#{mentioned_user.discriminator}",
                     data.get('gamer_tag', ''),
-                    data.get('ingame_name', '')
+                    data.get('ingame_name', ''),
+                    str(message.guild.id)
                 )
 
                 mentioned_user_mention = mentioned_user.mention
