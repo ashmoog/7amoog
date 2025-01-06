@@ -214,10 +214,6 @@ class PlayerManagement(commands.Cog):
             logger.info(f"Processing step {current_step} for user {message.author.id}")
 
             if current_step == 'gamer_tag':
-                if message.content.startswith(self.bot.command_prefix):
-                    await message.channel.send("Please enter your gamer tag without using commands.")
-                    return
-
                 # Validate gamer tag format (gamertag#0000)
                 import re
                 if message.content.startswith(self.bot.command_prefix):
