@@ -1,3 +1,4 @@
+
 from discord.ext import commands
 import discord
 from discord import app_commands
@@ -152,6 +153,27 @@ class PlayerManagement(commands.Cog):
             logger.error(f"Error in remove_player: {e}")
             await interaction.response.send_message("An error occurred. Please try again with a valid number (e.g., /remove 1)")
 
+    @discord.app_commands.command(name="undo", description="Restore the last removed player")
+    async def undo_remove(self, interaction: discord.Interaction):
+        """Restore the last removed player"""
+        if not self.last_removed_player:
+            await interaction.response.send_message("No player to restore.")
+            return
+
+        success, response_msg = db.add_player(
+            self.last_removed_player.discord_id,
+            self.last_removed_player.discord_tag,
+            self.last_removed_player.gamer_tag,
+            self.last_removed_player.ingame_name
+        )
+
+        if success:
+            user_mention = f"<@{self.last_removed_player.discord_id}>"
+            await interaction.response.send_message(f"Restored player {user_mention}!")
+            self.last_removed_player = None
+        else:
+            await interaction.response.send_message("Failed to restore player. Please try again.")
+
     @commands.Cog.listener()
     async def on_message(self, message):
         # Ignore bot messages
@@ -192,28 +214,6 @@ class PlayerManagement(commands.Cog):
                     return
 
                 player_state.update_operation(message.author.id, 'gamer_tag', message.content)
-
-    @discord.app_commands.command(name="undo", description="Restore the last removed player")
-    async def undo_remove(self, interaction: discord.Interaction):
-        """Restore the last removed player"""
-        if not self.last_removed_player:
-            await interaction.response.send_message("No player to restore.")
-            return
-
-        success, response_msg = db.add_player(
-            self.last_removed_player.discord_id,
-            self.last_removed_player.discord_tag,
-            self.last_removed_player.gamer_tag,
-            self.last_removed_player.ingame_name
-        )
-
-        if success:
-            user_mention = f"<@{self.last_removed_player.discord_id}>"
-            await interaction.response.send_message(f"Restored player {user_mention}!")
-            self.last_removed_player = None
-        else:
-            await interaction.response.send_message("Failed to restore player. Please try again.")
-
                 player_state.advance_step(message.author.id)
                 await message.channel.send("Great! Now enter your in-game name:")
 
