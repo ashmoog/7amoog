@@ -82,8 +82,17 @@ class PlayerManagement(commands.Cog):
             await interaction.response.send_message("You already have an operation in progress. Use /cancel to stop it.")
             return
 
+        instructions = (
+            "**Adding a New Player - Steps:**\n"
+            "1. Enter your gamer tag (format: gamertag#1234)\n"
+            "2. Enter your in-game name\n"
+            "3. Mention the Discord user (@username)\n\n"
+            "You can use `/cancel` at any time to stop the process.\n\n"
+            "Let's begin! Please enter your gamer tag (e.g., gamertag#1234):"
+        )
+        
         player_state.start_operation(interaction.user.id, interaction.channel_id)
-        await interaction.response.send_message("Let's add a new player! Please enter your gamer tag (e.g., gamertag#1234):")
+        await interaction.response.send_message(instructions)
 
     @discord.app_commands.command(name="cancel", description="Cancel the current operation")
     async def cancel(self, interaction: discord.Interaction):
