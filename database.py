@@ -7,7 +7,8 @@ from config import DATABASE_URL
 class Database:
     def __init__(self):
         self.engine = create_engine(DATABASE_URL)
-        Base.metadata.create_all(self.engine)
+        Base.metadata.drop_all(self.engine)  # Drop existing tables
+        Base.metadata.create_all(self.engine)  # Create fresh tables
         self.Session = sessionmaker(bind=self.engine)
 
     def get_session(self):
