@@ -1,7 +1,8 @@
 import logging
+import sys
+import os
 from bot import bot
 from config import DISCORD_TOKEN
-from keep_alive import keep_alive
 
 logging.basicConfig(
     level=logging.INFO,
@@ -11,9 +12,9 @@ logger = logging.getLogger(__name__)
 
 def main():
     try:
-        # Start the keep-alive server
-        keep_alive()
-        logger.info("Keep-alive server started")
+        # Add the current directory to Python path to help find modules
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        sys.path.append(script_dir)
 
         # Start the bot with auto-reconnect enabled
         logger.info("Starting bot with configured token...")

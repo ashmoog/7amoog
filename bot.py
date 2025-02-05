@@ -2,6 +2,7 @@ import logging
 import discord
 from discord.ext import commands
 from config import BOT_PREFIX
+import os
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -24,11 +25,12 @@ class AmongUsBot(commands.Bot):
 
     async def setup_hook(self):
         try:
+            # Load the cog using the module path
             await self.load_extension('cogs.player_management')
             logger.info("Loaded PlayerManagement cog")
             commands_list = [command.name for command in self.commands]
             logger.debug(f"Registered commands: {commands_list}")
-            
+
             # Sync commands with Discord
             await self.tree.sync()
             logger.info("Synced command tree with Discord")

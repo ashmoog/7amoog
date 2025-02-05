@@ -9,7 +9,7 @@ run = ["python", "main.py"]
 ignorePorts = true
 
 [workflows]
-runButton = "Discord Bot"
+runButton = "Project"
 
 [[workflows.workflow]]
 name = "Project"
@@ -32,8 +32,11 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python main.py"
-waitForPort = 8080
+args = "python3 main.py"
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
 
 [[ports]]
 localPort = 8080

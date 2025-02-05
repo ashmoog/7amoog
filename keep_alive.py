@@ -11,10 +11,15 @@ def home():
 
 def run():
     try:
-        app.run(host='0.0.0.0', port=8080)
+        # Use port 8000 to match .replit configuration
+        app.run(host='0.0.0.0', port=8000, debug=False)
     except Exception as e:
         logger.error(f"Error in keep alive server: {e}")
+        raise  # Re-raise to ensure main process knows about the failure
 
 def keep_alive():
-    t = Thread(target=run)
-    t.start()
+    """Start the keep-alive server in a separate thread"""
+    server_thread = Thread(target=run, daemon=True)
+    server_thread.start()
+    logger.info("Keep-alive server thread started")
+    return server_thread
