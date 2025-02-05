@@ -2,6 +2,10 @@
 import os
 import sys
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Discord Bot Configuration
 BOT_PREFIX = "!"
