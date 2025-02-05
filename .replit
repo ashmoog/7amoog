@@ -9,7 +9,7 @@ run = ["python", "main.py"]
 ignorePorts = true
 
 [workflows]
-runButton = "Project"
+runButton = "Discord Bot"
 
 [[workflows.workflow]]
 name = "Project"
