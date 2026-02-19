@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 from config import BOT_PREFIX
 import os
+import importlib.util
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
