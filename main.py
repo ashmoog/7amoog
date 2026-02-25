@@ -4,6 +4,7 @@ import os
 
 from bot import bot
 from config import DISCORD_TOKEN
+from keep_alive import keep_alive
 
 # Set up logging
 logging.basicConfig(
@@ -20,7 +21,9 @@ def main():
             sys.path.insert(0, project_root)
             logger.info(f"Added {project_root} to Python path")
 
-        # Start the bot with auto-reconnect enabled
+        keep_alive()
+        logger.info("Keep-alive server started")
+
         logger.info("Starting bot with configured token...")
         bot.run(DISCORD_TOKEN, reconnect=True)
     except Exception as e:
